@@ -1,6 +1,13 @@
 package capi
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"path"
+	"strings"
+	"time"
+)
 
 type Proxies struct {
 	Proxies map[string]Proxy `json:"proxies"`
@@ -18,4 +25,33 @@ type Proxy struct {
 	//
 	Now string   `json:"now"`
 	All []string `json:"all"`
+}
+
+func (c *Client) GetProxies() (*Proxies, error) {
+	bs, err := c.doGet("/proxies", nil)
+	if err != nil {
+		return nil, err
+	}
+	p := &Proxies{make(map[string]Proxy)}
+	err = json.Unmarshal(bs, p)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (c *Client) SwitchProxy(selector string, target string) error {
+	req, err := http.NewRequest(http.MethodPut, c.newEndpoint(path.Join("proxies", selector), nil).String(), strings.NewReader(fmt.Sprintf("{\"name\":%s}", target)))
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	return fmt.Errorf("unexcepted status code : %d", resp.StatusCode)
 }
