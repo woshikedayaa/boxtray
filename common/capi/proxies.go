@@ -41,7 +41,7 @@ func (c *Client) GetProxies() (*Proxies, error) {
 }
 
 func (c *Client) SwitchProxy(selector string, target string) error {
-	req, err := http.NewRequest(http.MethodPut, c.newEndpoint(path.Join("proxies", selector), nil).String(), strings.NewReader(fmt.Sprintf("{\"name\":%s}", target)))
+	req, err := c.getRequest(http.MethodPut, c.newEndpoint(path.Join("proxies", selector), nil).String(), strings.NewReader(fmt.Sprintf("{\"name\":\"%s\"}", target)))
 	if err != nil {
 		return err
 	}

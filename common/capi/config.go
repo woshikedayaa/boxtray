@@ -40,7 +40,7 @@ func (c *Client) SetMode(mode string) error {
 	if len(mode) == 0 {
 		return fmt.Errorf("mode str can not be empty")
 	}
-	req, err := http.NewRequest(http.MethodPatch, c.newEndpoint("/config", nil).String(), strings.NewReader(fmt.Sprintf("{\"mode\":%s}", mode)))
+	req, err := http.NewRequest(http.MethodPatch, c.newEndpoint("/config", nil).String(), strings.NewReader(fmt.Sprintf("{\"mode\":\"%s\"}", mode)))
 	if err != nil {
 		return err
 	}

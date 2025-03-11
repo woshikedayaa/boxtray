@@ -7,9 +7,14 @@ import (
 	"fyne.io/systray/example/icon"
 	"github.com/woshikedayaa/boxtray/common"
 	"github.com/woshikedayaa/boxtray/common/capi"
+	"github.com/woshikedayaa/boxtray/common/constant"
+	"github.com/woshikedayaa/boxtray/common/gui"
 	"github.com/woshikedayaa/boxtray/log"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,10 +28,10 @@ func onReady() {
 	systray.AddSeparator()
 	controlItems := initControlGui()
 	systray.AddSeparator()
-	// proxiesItems := initProxiesGui()
-	systray.AddSeparator()
 	initMainGui()
-	_, _ = infoItems, controlItems
+	systray.AddSeparator()
+	proxiesItems := initProxiesGui()
+	_, _, _ = infoItems, controlItems, proxiesItems
 }
 
 type InfoItems struct {
@@ -35,7 +40,7 @@ type InfoItems struct {
 	trafficItem *systray.MenuItem
 }
 
-func initInfoGui() InfoItems {
+func initInfoGui() *InfoItems {
 	backend := systray.AddMenuItem(global.config.Api.DisplayName(), "Name")
 	memoryItem := systray.AddMenuItem("Memory", "Memory")
 	trafficItem := systray.AddMenuItem("Traffic", "Traffic")
@@ -44,7 +49,7 @@ func initInfoGui() InfoItems {
 	memoryItem.Disable()
 	trafficItem.Disable()
 
-	items := InfoItems{
+	items := &InfoItems{
 		backend:     backend,
 		memoryItem:  memoryItem,
 		trafficItem: trafficItem,
@@ -73,7 +78,7 @@ func initInfoGui() InfoItems {
 	return items
 }
 
-func fetchInfo(items InfoItems) {
+func fetchInfo(items *InfoItems) {
 	logger := log.Get("info")
 
 	version, err := global.client.GetVersion()
@@ -102,7 +107,13 @@ func fetchInfo(items InfoItems) {
 	go func() {
 		defer wg.Done()
 		if err := global.client.GetTraffic(ctx, func(traffic capi.Traffic, stop context.CancelFunc) {
-			items.trafficItem.SetTitle(fmt.Sprintf("↑ %s ↓ %s", common.TrafficText(traffic.Up), common.TrafficText(traffic.Down)))
+			upText, downText := common.TrafficText(traffic.Up), common.TrafficText(traffic.Down)
+			placeHold := ""
+			const maxLength = 44
+			if len(upText)+len(downText) < maxLength {
+				placeHold = strings.Repeat(" ", maxLength-(len(upText)+len(downText)))
+			}
+			items.trafficItem.SetTitle(fmt.Sprintf("↑ %s ↓ %s%s", upText, downText, placeHold))
 		}); err != nil {
 			logger.Error("Get Traffic Failed", slog.String("error", err.Error()))
 		}
@@ -111,8 +122,66 @@ func fetchInfo(items InfoItems) {
 	wg.Wait()
 }
 
-func initProxiesGui() {
-	// TODO
+type ProxiesItems struct {
+	// len(radio) == len(nodes)
+	radio []*gui.RadioGroup
+	nodes []map[string]*systray.MenuItem
+}
+
+func initProxiesGui() *ProxiesItems {
+	logger := log.Get("proxies")
+	items := &ProxiesItems{}
+	subCh := global.Subscribe()
+	go func() {
+		currentStatus := StatusUnknown
+		for event := range subCh {
+			if event.Status == StatusStopped {
+				currentStatus = StatusStopped
+				continue
+			}
+			if currentStatus == StatusStarted && currentStatus == event.Status {
+				continue
+			}
+			currentStatus = StatusStarted
+
+			proxies, err := global.client.GetProxies()
+			if err != nil {
+				logger.Error("Get proxies", slog.String("error", err.Error()))
+				continue
+			}
+			for _, v := range items.radio {
+				v.Remove()
+			}
+			items.radio = nil
+			items.nodes = nil
+			keys := slices.Sorted(maps.Keys(proxies.Proxies))
+			for _, k := range keys {
+				node := proxies.Proxies[k]
+				if node.Type != constant.ProxyDisplayName(constant.TypeURLTest) && node.Type != constant.ProxyDisplayName(constant.TypeSelector) {
+					continue
+				}
+				radio := gui.NewRadioGroup(node.Name, node.Name, func(i int) {
+					innerErr := global.client.SwitchProxy(node.Name, node.All[i])
+					if innerErr != nil {
+						logger.Error("Switch proxy", slog.String("error", innerErr.Error()))
+						return
+					}
+					logger.Info("Switch proxy", slog.String("selector", node.Name), slog.String("node", node.All[i]))
+				})
+				nodeSet := make(map[string]*systray.MenuItem, len(node.All))
+				for _, proxyName := range node.All {
+					item := radio.AddItem(proxyName, "")
+					nodeSet[proxyName] = item
+				}
+				radio.Select(slices.Index(node.All, node.Now))
+
+				items.radio = append(items.radio, radio)
+				items.nodes = append(items.nodes, nodeSet)
+			}
+		}
+	}()
+
+	return items
 }
 
 type ControlItems struct {
@@ -120,21 +189,14 @@ type ControlItems struct {
 	updateButton *systray.MenuItem
 }
 
-func initControlGui() ControlItems {
+func initControlGui() *ControlItems {
 	logger := log.Get("control")
 	startButton := systray.AddMenuItemCheckbox("Started", "", false)
 	updateButton := systray.AddMenuItem("Update", "Update config file")
 
-	items := ControlItems{
+	items := &ControlItems{
 		startButton:  startButton,
 		updateButton: updateButton,
-	}
-
-	if len(global.config.Api.Control.Start) == 0 || len(global.config.Api.Control.Stop) == 0 {
-		logger.Warn("Start or Stop command not configured")
-		startButton.Disable()
-		updateButton.Disable()
-		return items
 	}
 
 	statusCh := global.Subscribe()
@@ -148,6 +210,12 @@ func initControlGui() ControlItems {
 			}
 		}
 	}()
+	if len(global.config.Api.Control.Start) == 0 || len(global.config.Api.Control.Stop) == 0 {
+		logger.Warn("Start or Stop command not configured")
+		startButton.Disable()
+		updateButton.Disable()
+		return items
+	}
 
 	go func() {
 		for range startButton.ClickedCh {

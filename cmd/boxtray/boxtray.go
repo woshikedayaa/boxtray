@@ -28,6 +28,5 @@ func Main(cfg config.Config) {
 		return
 	}
 	global = InitGlobal(cfg, client)
-	global.started.Store(true)
 	systray.Run(onReady, onExit)
 }

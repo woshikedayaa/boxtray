@@ -12,16 +12,17 @@ import (
 	"github.com/woshikedayaa/boxtray/log"
 )
 
-type StatusChange int
+type StatusCode int
 
 const (
-	StatusStarted StatusChange = iota
+	StatusStarted StatusCode = iota
 	StatusStopped
+	StatusUnknown
 )
 
 // StatusEvent 表示状态事件
 type StatusEvent struct {
-	Status  StatusChange
+	Status  StatusCode
 	IsError bool
 }
 
