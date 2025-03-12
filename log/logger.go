@@ -12,7 +12,7 @@ var (
 	globalLogger *Logger
 )
 
-const FieldKey = "field"
+const FieldKey = "logger"
 
 func Init(config config.LogConfig) error {
 	lev := slog.Level(0)
