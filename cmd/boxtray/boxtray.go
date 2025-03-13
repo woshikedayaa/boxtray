@@ -45,12 +45,31 @@ type BoxNotification struct {
 	Type    BoxNotificationType
 	Message any
 }
+
+func (no *BoxNotification) GetStatus() BoxStatus {
+	if no.Type == NotificationTypeStatus {
+		return no.Message.(BoxStatus)
+	}
+	panic("incorrect notification type")
+}
+
+func (no *BoxNotification) GetError() error {
+	if no.Type == NotificationTypeError {
+		return no.Message.(error)
+	}
+	panic("incorrect notification type")
+}
+
+type BoxStatus struct {
+	Up         bool
+	UpFromDown bool
+}
 type Box struct {
 	ctx context.Context
 
 	currentStatus atomic.Bool
 	api           *capi.Client
-	subscriber    map[string]chan BoxNotification
+	subscribers   map[string]chan BoxNotification
 	logger        *log.Logger
 
 	config config.Config
@@ -60,9 +79,9 @@ type Box struct {
 
 func NewBox(client *capi.Client, cfg config.Config) *Box {
 	return &Box{
-		api:        client,
-		subscriber: make(map[string]chan BoxNotification),
-		config:     cfg,
+		api:         client,
+		subscribers: make(map[string]chan BoxNotification),
+		config:      cfg,
 	}
 }
 
@@ -82,14 +101,19 @@ func (b *Box) RunLoop(ctx context.Context) {
 
 	b.initInfoGui(rootMenu)
 	rootMenu.AddSeparator()
-	go b.statusCheckDaemon(b.ctx)
+	b.initControlGui(rootMenu)
+	rootMenu.AddSeparator()
+	b.initBoxGui(rootMenu)
+	rootMenu.AddSeparator()
+	b.initProxiesGui(rootMenu)
+	go b.notificationPublisher(b.ctx)
 	os.Exit(qt.QApplication_Exec())
 }
 
 func (b *Box) boardCast(notification BoxNotification) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	for name, sub := range b.subscriber {
+	for name, sub := range b.subscribers {
 		switch notification.Type {
 		// triangle , lmao
 		case NotificationTypeError:
@@ -110,7 +134,6 @@ func (b *Box) boardCast(notification BoxNotification) {
 			go func() {
 				select {
 				case sub <- notification:
-					b.currentStatus.Store(notification.Message.(bool))
 				case <-time.After(5 * time.Second):
 					b.logger.Warn("notification to channel spend too much time!", slog.String("name", name), slog.String("Status", fmt.Sprintf("%s", notification.Message)))
 				}
@@ -146,23 +169,23 @@ func (b *Box) Subscribe(name string) <-chan BoxNotification {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	ch := make(chan BoxNotification)
-	if _, exist := b.subscriber[name]; exist {
+	if _, exist := b.subscribers[name]; exist {
 		panic("duplicated subscriber")
 	}
-	b.subscriber[name] = ch
+	b.subscribers[name] = ch
 	return ch
 }
 
 func (b *Box) Unsubscribe(name string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if ch, exist := b.subscriber[name]; exist {
+	if ch, exist := b.subscribers[name]; exist {
 		close(ch)
-		delete(b.subscriber, name)
+		delete(b.subscribers, name)
 	}
 }
 
-func (b *Box) statusCheckDaemon(ctx context.Context) {
+func (b *Box) notificationPublisher(ctx context.Context) {
 	ret := make(chan error)
 	next := make(chan struct{})
 	ticker := time.NewTicker(time.Second)
@@ -189,11 +212,14 @@ func (b *Box) statusCheckDaemon(ctx context.Context) {
 					Message: err,
 				})
 				b.boardCast(BoxNotification{
-					Type:    NotificationTypeStatus,
-					Message: false,
+					Type: NotificationTypeStatus,
+					Message: BoxStatus{
+						Up:         false,
+						UpFromDown: false,
+					},
 				})
+				b.currentStatus.Store(false)
 			}
-			b.currentStatus.Store(false)
 			next <- struct{}{}
 		case <-ctx.Done():
 			close(next)
@@ -202,11 +228,14 @@ func (b *Box) statusCheckDaemon(ctx context.Context) {
 				b.logger.Warn("detect service available now")
 			}
 			// no error
-			b.currentStatus.Store(true)
 			b.boardCast(BoxNotification{
-				Type:    NotificationTypeStatus,
-				Message: true,
+				Type: NotificationTypeStatus,
+				Message: BoxStatus{
+					Up:         true,
+					UpFromDown: !b.currentStatus.Load(),
+				},
 			})
+			b.currentStatus.Store(true)
 			next <- struct{}{}
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/woshikedayaa/boxtray/common/capi"
 	"github.com/woshikedayaa/boxtray/log"
 	"log/slog"
+	"os"
 )
 
 func (b *Box) initInfoGui(menu *qt.QMenu) {
@@ -89,4 +90,89 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 		}
 		b.Unsubscribe(infoGuiSubscriberName)
 	}()
+}
+
+func (b *Box) initControlGui(menu *qt.QMenu) {
+	startAction := qt.NewQAction2("Started")
+	startAction.SetCheckable(true)
+	updateAction := qt.NewQAction2("Update")
+	updateAction.SetCheckable(true)
+
+	if len(b.config.Api.Control.Start) == 0 || len(b.config.Api.Control.Stop) == 0 {
+		b.logger.Warn("start or stop command not configured, disable start action")
+		startAction.SetDisabled(true)
+	}
+	if len(b.config.Api.Control.Update) == 0 {
+		b.logger.Warn("update command not configured, disable update action")
+		updateAction.SetDisabled(true)
+	}
+
+	startAction.OnTriggered(func() {
+		if !startAction.IsEnabled() {
+			return
+		}
+		if b.currentStatus.Load() {
+			err := b.CloseManually()
+			if err != nil {
+				b.logger.Error("stop failed", slog.String("error", err.Error()))
+			}
+		} else {
+			err := b.StartManually()
+			if err != nil {
+				b.logger.Error("start failed", slog.String("error", err.Error()))
+			}
+		}
+	})
+	updateAction.OnTriggered(func() {
+		if !startAction.IsEnabled() {
+			return
+		}
+		err := b.UpdateManually()
+		if err != nil {
+			b.logger.Error("update failed", slog.String("error", err.Error()))
+		}
+	})
+
+	menu.AddAction(startAction)
+	menu.AddAction(updateAction)
+	const controlGuiSubscriberName = "control"
+	ch := b.Subscribe(controlGuiSubscriberName)
+	go func() {
+		for no := range ch {
+			if no.Type == NotificationTypeStatus {
+				mainthread.Wait(
+					func() {
+						startAction.SetChecked(no.Message.(bool))
+					})
+			}
+		}
+		b.Unsubscribe(controlGuiSubscriberName)
+	}()
+}
+
+func (b *Box) initBoxGui(menu *qt.QMenu) {
+	quitAction := qt.NewQAction2("Quit")
+	quitAction.OnTriggered(func() {
+		b.cancel()
+		os.Exit(0)
+	})
+	menu.AddAction(quitAction)
+}
+
+func (b *Box) initProxiesGui(menu *qt.QMenu) {
+	var (
+		proxiesMenu []*qt.QMenu
+		cur         = false
+	)
+	const proxiesNodeSubscribeName = "proxies-nodes"
+	ch := b.Subscribe(proxiesNodeSubscribeName)
+	go func() {
+		for no := range ch {
+			
+		}
+		b.Unsubscribe(proxiesNodeSubscribeName)
+	}()
+}
+func (b *Box) addProxiesSelector(menu *qt.QMenu) {
+
 }
