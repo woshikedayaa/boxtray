@@ -7,7 +7,7 @@ import (
 )
 
 type Delay struct {
-	Delay int `json:"delay"`
+	Delay uint16 `json:"delay"`
 }
 
 func (c *Client) GetDelay(target string, url string, timeout int) (Delay, error) {
@@ -22,12 +22,12 @@ func (c *Client) GetDelay(target string, url string, timeout int) (Delay, error)
 		"timeout": []string{strconv.FormatInt(int64(timeout), 10)},
 	})
 	if err != nil {
-		return Delay{-1}, err
+		return Delay{}, err
 	}
 	d := Delay{}
 	err = json.Unmarshal(bs, &d)
 	if err != nil {
-		return Delay{-1}, err
+		return Delay{}, err
 	}
 	return d, nil
 }

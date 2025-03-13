@@ -69,19 +69,21 @@ type Box struct {
 
 	currentStatus atomic.Bool
 	api           *capi.Client
-	subscribers   map[string]chan BoxNotification
+	subscribers   *sync.Map //map[string]chan BoxNotification
 	logger        *log.Logger
+
+	proxies *ProxiesManager
 
 	config config.Config
 	cancel context.CancelFunc
-	mu     sync.RWMutex
 }
 
 func NewBox(client *capi.Client, cfg config.Config) *Box {
 	return &Box{
 		api:         client,
-		subscribers: make(map[string]chan BoxNotification),
+		subscribers: &sync.Map{},
 		config:      cfg,
+		proxies:     NewProxiesManager(),
 	}
 }
 
@@ -94,6 +96,7 @@ func (b *Box) RunLoop(ctx context.Context) {
 	defer b.cancel()
 	b.logger = log.Get("main")
 	_ = qt.NewQApplication(nil)
+
 	tray := qt.NewQSystemTrayIcon2(qt.QApplication_Style().StandardIcon(qt.QStyle__SP_ComputerIcon, nil, nil))
 	rootMenu := qt.NewQMenu2()
 	tray.SetContextMenu(rootMenu)
@@ -111,16 +114,16 @@ func (b *Box) RunLoop(ctx context.Context) {
 }
 
 func (b *Box) boardCast(notification BoxNotification) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	for name, sub := range b.subscribers {
+	b.subscribers.Range(func(key, value any) bool {
+		name := key.(string)
+		sub := value.(chan BoxNotification)
 		switch notification.Type {
 		// triangle , lmao
 		case NotificationTypeError:
 			go func() {
 				select {
 				case sub <- notification:
-				case <-time.After(300 * time.Millisecond):
+				case <-time.After(1 * time.Second):
 					if notification.Message != nil {
 						if e, ok := notification.Message.(error); ok {
 							b.logger.Error("time out when sending a error notification", slog.String("error", e.Error()), slog.String("name", name))
@@ -134,12 +137,13 @@ func (b *Box) boardCast(notification BoxNotification) {
 			go func() {
 				select {
 				case sub <- notification:
-				case <-time.After(5 * time.Second):
-					b.logger.Warn("notification to channel spend too much time!", slog.String("name", name), slog.String("Status", fmt.Sprintf("%s", notification.Message)))
+				case <-time.After(1 * time.Second):
+					b.logger.Warn("notification to channel spend too much time!", slog.String("name", name), slog.String("Status", fmt.Sprintf("%s", notification.GetStatus().Up)))
 				}
 			}()
 		}
-	}
+		return true
+	})
 	if notification.Type == NotificationTypeError {
 		b.currentStatus.Store(false)
 	}
@@ -166,22 +170,18 @@ func (b *Box) UpdateManually() error {
 }
 
 func (b *Box) Subscribe(name string) <-chan BoxNotification {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	ch := make(chan BoxNotification)
-	if _, exist := b.subscribers[name]; exist {
+	if _, exist := b.subscribers.Load(name); exist {
 		panic("duplicated subscriber")
 	}
-	b.subscribers[name] = ch
+	b.subscribers.Store(name, ch)
 	return ch
 }
 
 func (b *Box) Unsubscribe(name string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if ch, exist := b.subscribers[name]; exist {
-		close(ch)
-		delete(b.subscribers, name)
+	if ch, exist := b.subscribers.Load(name); exist {
+		close(ch.(chan BoxNotification))
+		b.subscribers.Delete(name)
 	}
 }
 

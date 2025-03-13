@@ -5,6 +5,7 @@ import (
 	"fmt"
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/woshikedayaa/boxtray/cmd/boxtray/gui"
 	"github.com/woshikedayaa/boxtray/common"
 	"github.com/woshikedayaa/boxtray/common/capi"
 	"github.com/woshikedayaa/boxtray/log"
@@ -35,13 +36,12 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 	ch := b.Subscribe(infoGuiSubscriberName)
 
 	go func() {
-		cur := false
 		for no := range ch {
 			if no.Type != NotificationTypeStatus {
 				continue
 			}
-			started := no.Message.(bool)
-			if started && !cur {
+			status := no.GetStatus()
+			if status.Up && status.UpFromDown {
 				version, err := b.api.GetVersion()
 				if err != nil {
 					logger.Error("get version failed", slog.String("error", err.Error()))
@@ -77,15 +77,12 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 					}
 					cancel()
 				}()
-
-				cur = true
-			} else if !no.Message.(bool) {
+			} else if !status.Up {
 				mainthread.Wait(func() {
 					versionAction.SetText(defaultVersionText)
 					trafficAction.SetText(defaultTrafficText)
 					memoryAction.SetText(defaultMemoryText)
 				})
-				cur = false
 			}
 		}
 		b.Unsubscribe(infoGuiSubscriberName)
@@ -142,7 +139,7 @@ func (b *Box) initControlGui(menu *qt.QMenu) {
 			if no.Type == NotificationTypeStatus {
 				mainthread.Wait(
 					func() {
-						startAction.SetChecked(no.Message.(bool))
+						startAction.SetChecked(no.GetStatus().Up)
 					})
 			}
 		}
@@ -161,18 +158,82 @@ func (b *Box) initBoxGui(menu *qt.QMenu) {
 
 func (b *Box) initProxiesGui(menu *qt.QMenu) {
 	var (
-		proxiesMenu []*qt.QMenu
-		cur         = false
+		proxiesMenus []*qt.QMenu
 	)
 	const proxiesNodeSubscribeName = "proxies-nodes"
 	ch := b.Subscribe(proxiesNodeSubscribeName)
 	go func() {
 		for no := range ch {
-			
+			if no.Type != NotificationTypeStatus {
+				return
+			}
+			status := no.GetStatus()
+			if status.Up && status.UpFromDown {
+				mainthread.Start(func() {
+					proxies, err := b.api.GetProxies()
+					if err != nil {
+						b.logger.Error("get proxies failed", slog.String("error", err.Error()))
+						return
+					}
+					err = b.proxies.Parse(proxies)
+					if err != nil {
+						b.logger.Error("parse proxies failed", slog.String("error", err.Error()))
+						return
+					}
+					for name, nodes := range b.proxies.LoadSelector() {
+						subMenu := qt.NewQMenu3(name)
+						subMenu.SetTitle(gui.LatencyText(name,
+							b.proxies.GetDelay(proxies.Proxies[name].Now)))
+						menu.AddMenu(subMenu)
+						b.addProxiesSelector(subMenu, common.MapSlice[*capi.Proxy, string, []*capi.Proxy, []string](nodes, func(idx int, source *capi.Proxy) string {
+							return source.Name
+						}), proxies.Proxies[name].Now)
+						proxiesMenus = append(proxiesMenus, subMenu)
+					}
+				})
+			} else if !status.Up {
+				for _, v := range proxiesMenus {
+					v.Destroy()
+				}
+				proxiesMenus = nil
+			}
 		}
 		b.Unsubscribe(proxiesNodeSubscribeName)
 	}()
 }
-func (b *Box) addProxiesSelector(menu *qt.QMenu) {
+func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
+	var actions = make(map[string]*qt.QAction)
 
+	refreshButton := qt.NewQAction2("Refresh")
+	refreshButton.SetCheckable(false)
+	refreshButton.SetEnabled(true)
+	refreshButton.OnTriggered(func() {
+		for _, n := range nodes {
+			go func(n string) {
+				delay, err := b.api.GetDelay(n, "https://google.com/generate_204", 3000)
+				_ = err
+				mainthread.Wait(
+					func() {
+						actions[n].SetText(gui.LatencyText(n, delay.Delay))
+					})
+			}(n)
+		}
+		b.logger.Info("refresh delay finished")
+	})
+	menu.AddAction(refreshButton)
+	menu.AddSeparator()
+	actionGroup := qt.NewQActionGroup(menu.QObject)
+	actionGroup.SetExclusive(true)
+	for _, v := range nodes {
+		act := qt.NewQAction2(v)
+		act.SetCheckable(true)
+		act.SetChecked(false)
+		act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
+		if v == now {
+			act.SetChecked(true)
+		}
+		menu.AddAction(act)
+		actionGroup.AddAction(act)
+		actions[v] = act
+	}
 }

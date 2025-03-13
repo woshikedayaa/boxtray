@@ -10,7 +10,7 @@ import (
 )
 
 type Proxies struct {
-	Proxies map[string]Proxy `json:"proxies"`
+	Proxies map[string]*Proxy `json:"proxies"`
 }
 
 type History struct {
@@ -32,7 +32,7 @@ func (c *Client) GetProxies() (*Proxies, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Proxies{make(map[string]Proxy)}
+	p := &Proxies{make(map[string]*Proxy)}
 	err = json.Unmarshal(bs, p)
 	if err != nil {
 		return nil, err
