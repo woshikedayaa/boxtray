@@ -150,6 +150,7 @@ func (b *Box) initControlGui(menu *qt.QMenu) {
 func (b *Box) initBoxGui(menu *qt.QMenu) {
 	quitAction := qt.NewQAction2("Quit")
 	quitAction.OnTriggered(func() {
+		b.logger.Info("Quit triggered,exit now !")
 		b.cancel()
 		os.Exit(0)
 	})
@@ -169,33 +170,40 @@ func (b *Box) initProxiesGui(menu *qt.QMenu) {
 			}
 			status := no.GetStatus()
 			if status.Up && status.UpFromDown {
-				mainthread.Start(func() {
-					proxies, err := b.api.GetProxies()
-					if err != nil {
-						b.logger.Error("get proxies failed", slog.String("error", err.Error()))
-						return
-					}
-					err = b.proxies.Parse(proxies)
-					if err != nil {
-						b.logger.Error("parse proxies failed", slog.String("error", err.Error()))
-						return
-					}
-					for name, nodes := range b.proxies.LoadSelector() {
+				proxies, err := b.api.GetProxies()
+				if err != nil {
+					b.logger.Error("get proxies failed", slog.String("error", err.Error()))
+					return
+				}
+				err = b.proxies.Parse(proxies)
+				if err != nil {
+					b.logger.Error("parse proxies failed", slog.String("error", err.Error()))
+					return
+				}
+				mainthread.Wait(func() {
+					selector := b.proxies.LoadSelector()
+					for pair := selector.Oldest(); pair != nil; pair = pair.Next() {
+						name, nodes := pair.Key, pair.Value
 						subMenu := qt.NewQMenu3(name)
-						subMenu.SetTitle(gui.LatencyText(name,
-							b.proxies.GetDelay(proxies.Proxies[name].Now)))
-						menu.AddMenu(subMenu)
 						b.addProxiesSelector(subMenu, common.MapSlice[*capi.Proxy, string, []*capi.Proxy, []string](nodes, func(idx int, source *capi.Proxy) string {
 							return source.Name
-						}), proxies.Proxies[name].Now)
+						}), proxies.Proxies.Value(name).Now)
+						// sync
+						subMenu.SetTitle(gui.LatencyText(name,
+							b.proxies.GetDelay(proxies.Proxies.Value(name).Now)))
+						menu.AddMenu(subMenu)
 						proxiesMenus = append(proxiesMenus, subMenu)
 					}
 				})
 			} else if !status.Up {
-				for _, v := range proxiesMenus {
-					v.Destroy()
-				}
+				mainthread.Wait(func() {
+					for _, v := range proxiesMenus {
+						v.Hide()
+						v.Destroy()
+					}
+				})
 				proxiesMenus = nil
+				b.logger.Info("service has down, remove all the proxies")
 			}
 		}
 		b.Unsubscribe(proxiesNodeSubscribeName)
@@ -207,33 +215,41 @@ func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 	refreshButton := qt.NewQAction2("Refresh")
 	refreshButton.SetCheckable(false)
 	refreshButton.SetEnabled(true)
+	// todo : switch to goroutine pool
 	refreshButton.OnTriggered(func() {
 		for _, n := range nodes {
 			go func(n string) {
 				delay, err := b.api.GetDelay(n, "https://google.com/generate_204", 3000)
 				_ = err
-				mainthread.Wait(
-					func() {
-						actions[n].SetText(gui.LatencyText(n, delay.Delay))
-					})
+				mainthread.Wait(func() {
+					actions[n].SetText(gui.LatencyText(n, delay.Delay))
+				})
 			}(n)
 		}
 		b.logger.Info("refresh delay finished")
 	})
 	menu.AddAction(refreshButton)
 	menu.AddSeparator()
-	actionGroup := qt.NewQActionGroup(menu.QObject)
+	actionGroup := qt.NewQActionGroup(nil)
 	actionGroup.SetExclusive(true)
 	for _, v := range nodes {
 		act := qt.NewQAction2(v)
 		act.SetCheckable(true)
 		act.SetChecked(false)
+		//mainthread.Wait(func() {
+		//	act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
+		//	if v == now {
+		//		act.SetChecked(true)
+		//	}
+		//	actionGroup.AddAction(act)
+		//	menu.AddAction(act)
+		//})
 		act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
 		if v == now {
 			act.SetChecked(true)
 		}
-		menu.AddAction(act)
 		actionGroup.AddAction(act)
+		menu.AddAction(act)
 		actions[v] = act
 	}
 }

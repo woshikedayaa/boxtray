@@ -3,6 +3,7 @@ package capi
 import (
 	"encoding/json"
 	"fmt"
+	orderedmap "github.com/wk8/go-ordered-map/v2"
 	"net/http"
 	"path"
 	"strings"
@@ -10,7 +11,7 @@ import (
 )
 
 type Proxies struct {
-	Proxies map[string]*Proxy `json:"proxies"`
+	Proxies *orderedmap.OrderedMap[string, *Proxy] `json:"proxies"`
 }
 
 type History struct {
@@ -32,7 +33,7 @@ func (c *Client) GetProxies() (*Proxies, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Proxies{make(map[string]*Proxy)}
+	p := &Proxies{orderedmap.New[string, *Proxy]()}
 	err = json.Unmarshal(bs, p)
 	if err != nil {
 		return nil, err

@@ -10,6 +10,7 @@ import (
 	"github.com/woshikedayaa/boxtray/log"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,7 +139,7 @@ func (b *Box) boardCast(notification BoxNotification) {
 				select {
 				case sub <- notification:
 				case <-time.After(1 * time.Second):
-					b.logger.Warn("notification to channel spend too much time!", slog.String("name", name), slog.String("Status", fmt.Sprintf("%s", notification.GetStatus().Up)))
+					b.logger.Warn("notification to channel spend too much time!", slog.String("name", name), slog.String("Status", fmt.Sprintf("%s", strconv.FormatBool(notification.GetStatus().Up))))
 				}
 			}()
 		}
