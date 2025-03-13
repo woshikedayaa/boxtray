@@ -5,9 +5,9 @@ import (
 	"fmt"
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/mainthread"
-	"github.com/woshikedayaa/boxtray/cmd/boxtray/gui"
 	"github.com/woshikedayaa/boxtray/common"
 	"github.com/woshikedayaa/boxtray/common/capi"
+	"github.com/woshikedayaa/boxtray/common/gui"
 	"github.com/woshikedayaa/boxtray/log"
 	"log/slog"
 	"os"
@@ -54,7 +54,7 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 				go func() {
 					if err := b.api.GetTraffic(ctx, func(traffic capi.Traffic, stop context.CancelFunc) {
 						mainthread.Wait(func() {
-							trafficAction.SetText(fmt.Sprintf("↑ %s↓ %s", common.TrafficText(traffic.Up), common.TrafficText(traffic.Down)))
+							trafficAction.SetText(fmt.Sprintf("↑ %s↓ %s", gui.TrafficText(traffic.Up), gui.TrafficText(traffic.Down)))
 						})
 						if !b.currentStatus.Load() {
 							stop()
@@ -67,7 +67,7 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 				go func() {
 					if err := b.api.GetMemory(ctx, func(memory capi.Memory, stop context.CancelFunc) {
 						mainthread.Wait(func() {
-							memoryAction.SetText(fmt.Sprintf("%s", common.MemoryText(memory.Inuse)))
+							memoryAction.SetText(fmt.Sprintf("%s", gui.MemoryText(memory.Inuse)))
 						})
 						if !b.currentStatus.Load() {
 							stop()
@@ -185,12 +185,11 @@ func (b *Box) initProxiesGui(menu *qt.QMenu) {
 					for pair := selector.Oldest(); pair != nil; pair = pair.Next() {
 						name, nodes := pair.Key, pair.Value
 						subMenu := qt.NewQMenu3(name)
+						subMenu.SetTitle(name)
 						b.addProxiesSelector(subMenu, common.MapSlice[*capi.Proxy, string, []*capi.Proxy, []string](nodes, func(idx int, source *capi.Proxy) string {
 							return source.Name
 						}), proxies.Proxies.Value(name).Now)
 						// sync
-						subMenu.SetTitle(gui.LatencyText(name,
-							b.proxies.GetDelay(proxies.Proxies.Value(name).Now)))
 						menu.AddMenu(subMenu)
 						proxiesMenus = append(proxiesMenus, subMenu)
 					}
@@ -236,18 +235,24 @@ func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 		act := qt.NewQAction2(v)
 		act.SetCheckable(true)
 		act.SetChecked(false)
-		//mainthread.Wait(func() {
-		//	act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
-		//	if v == now {
-		//		act.SetChecked(true)
-		//	}
-		//	actionGroup.AddAction(act)
-		//	menu.AddAction(act)
-		//})
 		act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
 		if v == now {
 			act.SetChecked(true)
+			act.SetDisabled(true)
 		}
+		act.OnTriggered(func() {
+			err := b.api.SwitchProxy(menu.Title(), v)
+			if err != nil {
+				b.logger.Error("switch proxy failed", slog.String("selector", menu.Title()), slog.String("target", v))
+				return
+			}
+			b.logger.Info("switch proxy finished", slog.String("selector", menu.Title()), slog.String("target", v))
+			for _, v := range actions {
+				v.SetEnabled(true)
+			}
+			act.SetDisabled(true)
+		})
+		// add
 		actionGroup.AddAction(act)
 		menu.AddAction(act)
 		actions[v] = act
