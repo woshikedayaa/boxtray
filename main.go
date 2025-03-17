@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/woshikedayaa/boxtray/cmd/boxtray"
 	"github.com/woshikedayaa/boxtray/cmd/boxtray/metadata"
+	"github.com/woshikedayaa/boxtray/common"
 	"github.com/woshikedayaa/boxtray/config"
 	"github.com/woshikedayaa/boxtray/log"
 	"os"
@@ -26,6 +27,11 @@ func main() {
 	if version {
 		fmt.Println(metadata.Version)
 		return
+	}
+	configFile, err := common.ExpandHomePath(configFile)
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
 
 	file, err := os.Open(configFile)

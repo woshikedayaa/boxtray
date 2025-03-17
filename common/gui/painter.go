@@ -49,6 +49,9 @@ func LatencyPainter(pixmap *qt.QPixmap, latency uint16) {
 }*/
 
 func LatencyText(name string, latency uint16) string {
+	if latency == 0 {
+		return fmt.Sprintf("%s\t-1ms", name)
+	}
 	return fmt.Sprintf("%s\t%dms", name, latency)
 }
 

@@ -2,6 +2,9 @@ package common
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 func CombineArgs(values ...url.Values) url.Values {
@@ -24,4 +27,29 @@ func CombineArgs(values ...url.Values) url.Values {
 		}
 	}
 	return ret
+}
+
+// ExpandHomePath replaces the ~ symbol in paths with the user's home directory
+func ExpandHomePath(path string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	if path == "~" {
+		return home, nil
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(home, path[2:]), nil
+	}
+
+	// Handle the ~username/path case
+	// Note: Go standard library cannot directly get other users' home directories
+	// This case requires special handling, typically using /home/username on Unix systems
+	return path, nil
 }
