@@ -97,12 +97,10 @@ func (c *Client) doGet(ph string, arg url.Values) ([]byte, error) {
 	}
 	defer response.Body.Close()
 
-	// 检查状态码
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", response.StatusCode)
 	}
 
-	// 处理 Content-Length 头
 	if contentLengthStr := response.Header.Get("Content-Length"); contentLengthStr != "" {
 		contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64)
 		if err != nil {
@@ -114,10 +112,9 @@ func (c *Client) doGet(ph string, arg url.Values) ([]byte, error) {
 		}
 	}
 
-	// 即使没有 Content-Length 头，也要限制读取大小
 	limitedReader := &io.LimitedReader{
 		R: response.Body,
-		N: c.config.MaxResponseSize + 1, // +1 用于检测是否超过最大大小
+		N: c.config.MaxResponseSize + 1,
 	}
 
 	body, err := io.ReadAll(limitedReader)
@@ -125,7 +122,6 @@ func (c *Client) doGet(ph string, arg url.Values) ([]byte, error) {
 		return nil, fmt.Errorf("error reading response: %w", err)
 	}
 
-	// 如果 limitedReader.N 为 0，说明达到了限制大小
 	if limitedReader.N <= 0 {
 		body = nil
 		return nil, fmt.Errorf("response exceeded maximum size of %d bytes", c.config.MaxResponseSize)

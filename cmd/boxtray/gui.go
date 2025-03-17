@@ -220,7 +220,6 @@ func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 	refreshButton.SetIcon(qt.QApplication_Style().StandardIcon(qt.QStyle__SP_BrowserReload, nil, nil))
 	refreshButton.SetCheckable(false)
 	refreshButton.SetEnabled(true)
-	// todo : switch to goroutine pool
 	refreshButton.OnTriggered(func() {
 		if !b.currentStatus.Load() {
 			b.logger.Info("refresh failed,the service has down.")
@@ -228,10 +227,11 @@ func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 		}
 
 		for _, n := range nodes {
-			go func(n string) {
-				delay, _ := b.api.GetDelay(n, "https://google.com/generate_204", 3000)
-				b.proxies.UpdateDelay(n, delay.Delay)
-			}(n)
+			nn := n
+			go func() {
+				delay, _ := b.api.GetDelay(nn, b.config.Box.UrlTest, int(b.config.Box.MaxDelay))
+				b.proxies.UpdateDelay(nn, delay.Delay)
+			}()
 		}
 		b.logger.Info("refresh delay finished")
 	})
@@ -251,7 +251,6 @@ func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 		if v == now {
 			act.SetChecked(true)
 			act.SetDisabled(true)
-			// act.SetIcon(gui.LatencyIcon(b.proxies.GetDelay(v)))
 			act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
 		}
 		act.OnTriggered(func() {
@@ -270,7 +269,7 @@ func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 			act.SetDisabled(true)
 		})
 		b.proxies.BindDelay(v, func(de uint16) {
-			b.logger.Debug("update action text", slog.String("selector", selector), slog.String("target", v), slog.String("reason", "delay"))
+			b.logger.Debug("update delay", slog.String("selector", selector), slog.String("target", v))
 			mainthread.Wait(func() {
 				act.SetText(gui.LatencyText(v, de))
 			})

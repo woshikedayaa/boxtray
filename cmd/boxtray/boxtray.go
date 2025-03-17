@@ -2,6 +2,7 @@ package boxtray
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/woshikedayaa/boxtray/common"
@@ -9,19 +10,16 @@ import (
 	"github.com/woshikedayaa/boxtray/config"
 	"github.com/woshikedayaa/boxtray/log"
 	"log/slog"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-func Main(cfg config.Config) {
-	err := log.Init(cfg.Log)
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "level: ", err.Error())
-		return
-	}
+//go:embed resources/singbox.ico
+var icoByte []byte
+
+func Main(cfg config.Config) int {
 	logger := log.Get("init")
 	client, err := capi.NewClient(cfg.Api.Endpoint(), &capi.ClientConfig{
 		Timeout: 10 * time.Second,
@@ -30,9 +28,11 @@ func Main(cfg config.Config) {
 	logger.Info("Set endpoint", slog.String("endpoint", cfg.Api.Endpoint()))
 	if err != nil {
 		logger.Error("Create Client", slog.String("error", err.Error()))
-		return
+		return 1
 	}
-	NewBox(client, cfg).RunLoop(context.Background())
+
+	box := NewBox(client, cfg)
+	return box.RunLoop(context.Background())
 }
 
 type BoxNotificationType uint16
@@ -66,43 +66,41 @@ type BoxStatus struct {
 	UpFromDown bool
 }
 type Box struct {
-	ctx context.Context
+	ctx    context.Context
+	cancel context.CancelFunc
+	config config.Config
 
-	currentStatus atomic.Bool
-	api           *capi.Client
-	subscribers   *sync.Map //map[string]chan BoxNotification
-	logger        *log.Logger
+	// Status
+	currentStatus    atomic.Bool
+	api              *capi.Client
+	subscribers      *sync.Map //map[string]chan BoxNotification
+	subscribersCount atomic.Int32
+	logger           *log.Logger
 
 	proxies *ProxiesManager
-
-	config config.Config
-	cancel context.CancelFunc
 }
 
 func NewBox(client *capi.Client, cfg config.Config) *Box {
-	return &Box{
-		api:         client,
-		subscribers: &sync.Map{},
-		config:      cfg,
-		proxies:     NewProxiesManager(),
+	if cfg.Box.UrlTest == "" {
+		cfg.Box.UrlTest = "https://google.com/generate_204"
 	}
+	if cfg.Box.MaxDelay < 1 {
+		cfg.Box.MaxDelay = 3000
+	}
+	b := &Box{
+		api:              client,
+		subscribers:      &sync.Map{},
+		subscribersCount: atomic.Int32{},
+		config:           cfg,
+		proxies:          NewProxiesManager(),
+		logger:           log.Get("main"),
+	}
+	return b
 }
 
-func (b *Box) RunLoop(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	b.ctx, b.cancel = context.WithCancel(ctx)
-	defer b.cancel()
-	b.logger = log.Get("main")
-	_ = qt.NewQApplication(nil)
-
-	tray := qt.NewQSystemTrayIcon2(qt.QApplication_Style().StandardIcon(qt.QStyle__SP_ComputerIcon, nil, nil))
+func (b *Box) initGui() {
+	_ = qt.NewQApplication([]string{"boxtray"})
 	rootMenu := qt.NewQMenu2()
-	tray.SetContextMenu(rootMenu)
-	tray.Show()
-
 	b.initInfoGui(rootMenu)
 	rootMenu.AddSeparator()
 	b.initControlGui(rootMenu)
@@ -110,8 +108,31 @@ func (b *Box) RunLoop(ctx context.Context) {
 	b.initBoxGui(rootMenu)
 	rootMenu.AddSeparator()
 	b.initProxiesGui(rootMenu)
+
+	icoPixMap := qt.NewQPixmap()
+	icoPixMap.LoadFromData2(icoByte, "")
+	tray := qt.NewQSystemTrayIcon2(qt.NewQIcon2(icoPixMap))
+	tray.SetContextMenu(rootMenu)
+	tray.Show()
+}
+
+func (b *Box) clean() {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	for b.subscribersCount.Load() != 0 {
+	}
+}
+
+func (b *Box) RunLoop(ctx context.Context) int {
+	if ctx == nil {
+		panic("nil context")
+	}
+	b.initGui()
+	b.ctx, b.cancel = context.WithCancel(ctx)
+	defer b.clean()
 	go b.notificationPublisher(b.ctx)
-	os.Exit(qt.QApplication_Exec())
+	return qt.QApplication_Exec()
 }
 
 func (b *Box) broadCast(notification BoxNotification) {
@@ -179,6 +200,7 @@ func (b *Box) Subscribe(name string) <-chan BoxNotification {
 		panic("duplicated subscriber")
 	}
 	b.subscribers.Store(name, ch)
+	b.subscribersCount.Add(1)
 	b.logger.Debug("new subscribe", slog.String("name", name))
 	return ch
 }
@@ -187,6 +209,7 @@ func (b *Box) Unsubscribe(name string) {
 	if ch, exist := b.subscribers.Load(name); exist {
 		close(ch.(chan BoxNotification))
 		b.subscribers.Delete(name)
+		b.subscribersCount.Add(-1)
 		b.logger.Debug("unsubscribe", slog.String("name", name))
 	}
 }
@@ -229,6 +252,7 @@ func (b *Box) notificationPublisher(ctx context.Context) {
 			next <- struct{}{}
 		case <-ctx.Done():
 			close(next)
+			return
 		default:
 			if !b.currentStatus.Load() {
 				b.logger.Warn("detect service available now")

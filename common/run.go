@@ -10,3 +10,10 @@ func RunOneShot(ctx context.Context, c string, arg []string) error {
 	err := res.Run()
 	return err
 }
+
+func Must[T any](val T, e error) T {
+	if e != nil {
+		panic(e)
+	}
+	return val
+}

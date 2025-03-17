@@ -2,10 +2,9 @@ package gui
 
 import (
 	"fmt"
-	qt "github.com/mappu/miqt/qt6"
-	"strconv"
 )
 
+/*
 var (
 	latencyFont = qt.NewQFont()
 )
@@ -47,7 +46,8 @@ func LatencyPainter(pixmap *qt.QPixmap, latency uint16) {
 	painter.SetFont(latencyFont)
 	painter.SetPen(color)
 	painter.DrawText6(pixmap.Rect(), int(qt.AlignCenter), text)
-}
+}*/
+
 func LatencyText(name string, latency uint16) string {
 	return fmt.Sprintf("%s\t%dms", name, latency)
 }

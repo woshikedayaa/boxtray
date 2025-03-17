@@ -1,8 +1,6 @@
 package config
 
 import (
-	"encoding/json"
-	"io"
 	"net/url"
 )
 
@@ -19,16 +17,7 @@ type ApiConfig struct {
 	Path   string `json:"path"`
 	Secret string `json:"secret"`
 
-	Label string `json:"label"`
-
 	Control ControlConfig `json:"control"`
-}
-
-func (a ApiConfig) DisplayName() string {
-	if a.Label != "" {
-		return a.Label
-	}
-	return a.Host
 }
 
 func (a ApiConfig) Endpoint() string {
@@ -47,16 +36,13 @@ type LogConfig struct {
 	Level   string `json:"level"`
 	Disable bool   `json:"disable"`
 }
+
+type BoxConfig struct {
+	UrlTest  string `json:"url_test"`
+	MaxDelay uint16 `json:"max_delay"`
+}
 type Config struct {
 	Api ApiConfig `json:"api"`
 	Log LogConfig `json:"log"`
-}
-
-func New(reader io.Reader) (*Config, error) {
-	cfg := &Config{}
-	err := json.NewDecoder(reader).Decode(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return cfg, nil
+	Box BoxConfig `json:"box"`
 }

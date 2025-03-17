@@ -1,0 +1,18 @@
+{
+  "log": { "level": "warn", "disable": false },
+  "api": {
+    "scheme": "http",
+    "host": "127.0.0.1:9090",
+    "path": "",
+    "secret": "20002000",
+    "control": {
+      "start": ["systemctl", "start", "sing-box.service"],
+      "stop": ["systemctl", "stop", "sing-box.service"],
+      "update": []
+    }
+  },
+  "box": {
+    "url_test": "https://google.com/generate_204",
+    "max_delay": 3000
+  }
+}
