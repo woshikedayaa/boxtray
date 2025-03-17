@@ -8,6 +8,7 @@ import (
 	"github.com/woshikedayaa/boxtray/log"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -16,16 +17,16 @@ type ProxiesManager struct {
 	// Copy on Write
 	//
 	selectors atomic.Pointer[orderedmap.OrderedMap[string, []*capi.Proxy]]
-	delays    atomic.Pointer[map[string]uint16]
-
-	logger *slog.Logger
+	delays    *sync.Map // map[string]uint16
+	bind      *sync.Map
+	logger    *slog.Logger
 }
 
 func NewProxiesManager() *ProxiesManager {
 	p := &ProxiesManager{}
-	selectors, delays := orderedmap.New[string, []*capi.Proxy](), make(map[string]uint16)
-	p.selectors.Store(selectors)
-	p.delays.Store(&delays)
+	p.selectors.Store(orderedmap.New[string, []*capi.Proxy]())
+	p.delays = &sync.Map{}
+	p.bind = &sync.Map{}
 	p.logger = log.Get("proxies-manager")
 	return p
 }
@@ -71,18 +72,34 @@ func (p *ProxiesManager) Parse(proxies *capi.Proxies) error {
 	}
 
 	p.selectors.Store(selectors)
-	p.delays.Store(&delays)
+	p.delays.Clear()
+	for k, v := range delays {
+		p.delays.Store(k, v)
+	}
 	return nil
 }
 
 func (p *ProxiesManager) LoadSelector() *orderedmap.OrderedMap[string, []*capi.Proxy] {
 	return p.selectors.Load()
 }
-func (p *ProxiesManager) LoadDelay() map[string]uint16 {
-	return *p.delays.Load()
-}
-
 func (p *ProxiesManager) GetDelay(name string) uint16 {
-	delay := p.LoadDelay()
-	return delay[name]
+	if d, ok := p.delays.Load(name); ok {
+		return d.(uint16)
+	}
+	return 0
+}
+func (p *ProxiesManager) BindDelay(name string, f func(de uint16)) {
+	if old, exist := p.bind.LoadOrStore(name, f); exist {
+		// chain together
+		p.bind.Store(name, func(de uint16) {
+			old.(func(uint16))(de)
+			f(de)
+		})
+	}
+}
+func (p *ProxiesManager) UpdateDelay(name string, delay uint16) {
+	p.delays.Store(name, delay)
+	if f, ok := p.bind.Load(name); ok {
+		f.(func(uint16))(delay)
+	}
 }

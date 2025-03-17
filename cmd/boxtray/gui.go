@@ -36,6 +36,7 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 	ch := b.Subscribe(infoGuiSubscriberName)
 
 	go func() {
+		defer b.Unsubscribe(infoGuiSubscriberName)
 		for no := range ch {
 			if no.Type != NotificationTypeStatus {
 				continue
@@ -85,7 +86,6 @@ func (b *Box) initInfoGui(menu *qt.QMenu) {
 				})
 			}
 		}
-		b.Unsubscribe(infoGuiSubscriberName)
 	}()
 }
 
@@ -135,15 +135,20 @@ func (b *Box) initControlGui(menu *qt.QMenu) {
 	const controlGuiSubscriberName = "control"
 	ch := b.Subscribe(controlGuiSubscriberName)
 	go func() {
+		defer b.Unsubscribe(controlGuiSubscriberName)
 		for no := range ch {
-			if no.Type == NotificationTypeStatus {
+			if no.Type == NotificationTypeStatus && no.GetStatus().UpFromDown {
 				mainthread.Wait(
 					func() {
-						startAction.SetChecked(no.GetStatus().Up)
+						startAction.SetChecked(true)
+					})
+			} else if no.Type == NotificationTypeStatus && !no.GetStatus().Up {
+				mainthread.Wait(
+					func() {
+						startAction.SetChecked(false)
 					})
 			}
 		}
-		b.Unsubscribe(controlGuiSubscriberName)
 	}()
 }
 
@@ -164,9 +169,10 @@ func (b *Box) initProxiesGui(menu *qt.QMenu) {
 	const proxiesNodeSubscribeName = "proxies-nodes"
 	ch := b.Subscribe(proxiesNodeSubscribeName)
 	go func() {
+		defer b.Unsubscribe(proxiesNodeSubscribeName)
 		for no := range ch {
 			if no.Type != NotificationTypeStatus {
-				return
+				continue
 			}
 			status := no.GetStatus()
 			if status.Up && status.UpFromDown {
@@ -185,7 +191,6 @@ func (b *Box) initProxiesGui(menu *qt.QMenu) {
 					for pair := selector.Oldest(); pair != nil; pair = pair.Next() {
 						name, nodes := pair.Key, pair.Value
 						subMenu := qt.NewQMenu3(name)
-						subMenu.SetTitle(name)
 						b.addProxiesSelector(subMenu, common.MapSlice[*capi.Proxy, string, []*capi.Proxy, []string](nodes, func(idx int, source *capi.Proxy) string {
 							return source.Name
 						}), proxies.Proxies.Value(name).Now)
@@ -195,62 +200,80 @@ func (b *Box) initProxiesGui(menu *qt.QMenu) {
 					}
 				})
 			} else if !status.Up {
-				mainthread.Wait(func() {
-					for _, v := range proxiesMenus {
-						v.Hide()
-						v.Destroy()
-					}
-				})
-				proxiesMenus = nil
-				b.logger.Info("service has down, remove all the proxies")
+				if proxiesMenus != nil {
+					mainthread.Wait(func() {
+						for _, v := range proxiesMenus {
+							menu.RemoveAction(v.MenuAction())
+						}
+					})
+					proxiesMenus = nil
+					b.logger.Info("service has down, remove all the proxies")
+				}
 			}
 		}
-		b.Unsubscribe(proxiesNodeSubscribeName)
 	}()
 }
 func (b *Box) addProxiesSelector(menu *qt.QMenu, nodes []string, now string) {
 	var actions = make(map[string]*qt.QAction)
-
+	selector := menu.Title()
 	refreshButton := qt.NewQAction2("Refresh")
+	refreshButton.SetIcon(qt.QApplication_Style().StandardIcon(qt.QStyle__SP_BrowserReload, nil, nil))
 	refreshButton.SetCheckable(false)
 	refreshButton.SetEnabled(true)
 	// todo : switch to goroutine pool
 	refreshButton.OnTriggered(func() {
+		if !b.currentStatus.Load() {
+			b.logger.Info("refresh failed,the service has down.")
+			return
+		}
+
 		for _, n := range nodes {
 			go func(n string) {
-				delay, err := b.api.GetDelay(n, "https://google.com/generate_204", 3000)
-				_ = err
-				mainthread.Wait(func() {
-					actions[n].SetText(gui.LatencyText(n, delay.Delay))
-				})
+				delay, _ := b.api.GetDelay(n, "https://google.com/generate_204", 3000)
+				b.proxies.UpdateDelay(n, delay.Delay)
 			}(n)
 		}
 		b.logger.Info("refresh delay finished")
 	})
 	menu.AddAction(refreshButton)
 	menu.AddSeparator()
+
 	actionGroup := qt.NewQActionGroup(nil)
 	actionGroup.SetExclusive(true)
 	for _, v := range nodes {
+		if v == "" {
+			continue
+		}
 		act := qt.NewQAction2(v)
 		act.SetCheckable(true)
 		act.SetChecked(false)
-		act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
+		act.SetText(v)
 		if v == now {
 			act.SetChecked(true)
 			act.SetDisabled(true)
+			// act.SetIcon(gui.LatencyIcon(b.proxies.GetDelay(v)))
+			act.SetText(gui.LatencyText(v, b.proxies.GetDelay(v)))
 		}
 		act.OnTriggered(func() {
-			err := b.api.SwitchProxy(menu.Title(), v)
-			if err != nil {
-				b.logger.Error("switch proxy failed", slog.String("selector", menu.Title()), slog.String("target", v))
+			if !b.currentStatus.Load() {
 				return
 			}
-			b.logger.Info("switch proxy finished", slog.String("selector", menu.Title()), slog.String("target", v))
+			err := b.api.SwitchProxy(selector, v)
+			if err != nil {
+				b.logger.Error("switch proxy failed", slog.String("selector", selector), slog.String("target", v))
+				return
+			}
+			b.logger.Info("switch proxy finished", slog.String("selector", selector), slog.String("target", v))
 			for _, v := range actions {
 				v.SetEnabled(true)
 			}
 			act.SetDisabled(true)
+		})
+		b.proxies.BindDelay(v, func(de uint16) {
+			b.logger.Debug("update action text", slog.String("selector", selector), slog.String("target", v), slog.String("reason", "delay"))
+			mainthread.Wait(func() {
+				act.SetText(gui.LatencyText(v, de))
+			})
 		})
 		// add
 		actionGroup.AddAction(act)

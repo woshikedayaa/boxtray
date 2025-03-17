@@ -12,7 +12,13 @@ var (
 
 func init() {
 	latencyFont.SetBold(true)
-	latencyFont.SetPointSizeF(7.5)
+	latencyFont.SetPointSizeF(8)
+}
+
+func LatencyIcon(latency uint16) *qt.QIcon {
+	pix := qt.NewQPixmap2(24, 24)
+	LatencyPainter(pix, latency)
+	return qt.NewQIcon2(pix)
 }
 
 func LatencyPainter(pixmap *qt.QPixmap, latency uint16) {
@@ -26,25 +32,22 @@ func LatencyPainter(pixmap *qt.QPixmap, latency uint16) {
 	}
 
 	pixmap.Fill1(qt.NewQColor2(qt.Transparent))
-	painter := qt.NewQPainter()
+
 	color := qt.NewQColor3(0, 200, 0) // green
-	if latency > 500 {
+	if latency > 300 {
 		color = qt.NewQColor3(255, 200, 0) // yellow
 	}
-	if latency > 1500 {
+	if latency > 1000 {
 		color = qt.NewQColor3(255, 0, 0) // red
 	}
+	painter := qt.NewQPainter()
 	painter.Begin(pixmap.QPaintDevice)
-	painter.SetPenWithPen(qt.NewQPen2(qt.NoPen))
-	painter.SetBrush(qt.NewQBrush3(color))
+	defer painter.End()
 	painter.SetRenderHint(qt.QPainter__Antialiasing | qt.QPainter__TextAntialiasing)
 	painter.SetFont(latencyFont)
-	painter.DrawRect2(0, 0, 22, 22)
-	painter.SetPen(qt.NewQColor2(qt.Black))
+	painter.SetPen(color)
 	painter.DrawText6(pixmap.Rect(), int(qt.AlignCenter), text)
-	painter.End()
 }
-
 func LatencyText(name string, latency uint16) string {
 	return fmt.Sprintf("%s\t%dms", name, latency)
 }

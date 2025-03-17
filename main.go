@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	boxtray.Main(config.Config{Log: config.LogConfig{Level: "INFO"}, Api: config.ApiConfig{
+	boxtray.Main(config.Config{Log: config.LogConfig{Level: "DEBUG"}, Api: config.ApiConfig{
 		Scheme: "http",
 		Host:   "localhost:9090",
 		Path:   "",

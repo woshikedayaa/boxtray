@@ -114,7 +114,7 @@ func (b *Box) RunLoop(ctx context.Context) {
 	os.Exit(qt.QApplication_Exec())
 }
 
-func (b *Box) boardCast(notification BoxNotification) {
+func (b *Box) broadCast(notification BoxNotification) {
 	b.subscribers.Range(func(key, value any) bool {
 		name := key.(string)
 		sub := value.(chan BoxNotification)
@@ -127,7 +127,7 @@ func (b *Box) boardCast(notification BoxNotification) {
 				case <-time.After(1 * time.Second):
 					if notification.Message != nil {
 						if e, ok := notification.Message.(error); ok {
-							b.logger.Error("time out when sending a error notification", slog.String("error", e.Error()), slog.String("name", name))
+							b.logger.Error("notification spend too much time!", slog.String("error", e.Error()), slog.String("type", "error"), slog.String("name", name))
 							return
 						}
 					}
@@ -139,7 +139,7 @@ func (b *Box) boardCast(notification BoxNotification) {
 				select {
 				case sub <- notification:
 				case <-time.After(1 * time.Second):
-					b.logger.Warn("notification to channel spend too much time!", slog.String("name", name), slog.String("Status", fmt.Sprintf("%s", strconv.FormatBool(notification.GetStatus().Up))))
+					b.logger.Warn("notification spend too much time!", slog.String("name", name), slog.String("type", "status"), slog.String("Status", fmt.Sprintf("%s", strconv.FormatBool(notification.GetStatus().Up))))
 				}
 			}()
 		}
@@ -151,22 +151,25 @@ func (b *Box) boardCast(notification BoxNotification) {
 }
 
 func (b *Box) CloseManually() error {
-	if len(b.config.Api.Control.Start) == 0 {
-		return fmt.Errorf("start command not configured")
-	}
-	return common.RunOneShot(b.ctx, b.config.Api.Control.Start[0], b.config.Api.Control.Start[1:])
-}
-func (b *Box) StartManually() error {
 	if len(b.config.Api.Control.Stop) == 0 {
 		return fmt.Errorf("stop command not configured")
 	}
+	b.logger.Debug("close now", slog.String("command", fmt.Sprint(b.config.Api.Control.Stop)))
 	return common.RunOneShot(b.ctx, b.config.Api.Control.Stop[0], b.config.Api.Control.Stop[1:])
+}
+func (b *Box) StartManually() error {
+	if len(b.config.Api.Control.Start) == 0 {
+		return fmt.Errorf("start command not configured")
+	}
+	b.logger.Debug("start now", slog.String("command", fmt.Sprint(b.config.Api.Control.Start)))
+	return common.RunOneShot(b.ctx, b.config.Api.Control.Start[0], b.config.Api.Control.Start[1:])
 }
 
 func (b *Box) UpdateManually() error {
 	if len(b.config.Api.Control.Update) == 0 {
 		return fmt.Errorf("update command not configured")
 	}
+	b.logger.Debug("update now", slog.String("command", fmt.Sprint(b.config.Api.Control.Update)))
 	return common.RunOneShot(b.ctx, b.config.Api.Control.Update[0], b.config.Api.Control.Update[1:])
 }
 
@@ -176,6 +179,7 @@ func (b *Box) Subscribe(name string) <-chan BoxNotification {
 		panic("duplicated subscriber")
 	}
 	b.subscribers.Store(name, ch)
+	b.logger.Debug("new subscribe", slog.String("name", name))
 	return ch
 }
 
@@ -183,6 +187,7 @@ func (b *Box) Unsubscribe(name string) {
 	if ch, exist := b.subscribers.Load(name); exist {
 		close(ch.(chan BoxNotification))
 		b.subscribers.Delete(name)
+		b.logger.Debug("unsubscribe", slog.String("name", name))
 	}
 }
 
@@ -199,6 +204,7 @@ func (b *Box) notificationPublisher(ctx context.Context) {
 			}
 		}
 	}()
+	next <- struct{}{}
 	for range ticker.C {
 		select {
 		case err := <-ret:
@@ -206,13 +212,12 @@ func (b *Box) notificationPublisher(ctx context.Context) {
 				continue
 			}
 			if b.currentStatus.Load() {
-				b.logger.Error("status check failed", slog.String("error", err.Error()))
-				b.logger.Warn("detect service down")
-				b.boardCast(BoxNotification{
+				b.logger.Warn("detect service down", slog.String("error", err.Error()))
+				b.broadCast(BoxNotification{
 					Type:    NotificationTypeError,
 					Message: err,
 				})
-				b.boardCast(BoxNotification{
+				b.broadCast(BoxNotification{
 					Type: NotificationTypeStatus,
 					Message: BoxStatus{
 						Up:         false,
@@ -229,7 +234,7 @@ func (b *Box) notificationPublisher(ctx context.Context) {
 				b.logger.Warn("detect service available now")
 			}
 			// no error
-			b.boardCast(BoxNotification{
+			b.broadCast(BoxNotification{
 				Type: NotificationTypeStatus,
 				Message: BoxStatus{
 					Up:         true,
